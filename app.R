@@ -7,18 +7,24 @@ source("helpers.R")
 source("helpers2.R")
 # Define UI for application that draws a histogram
 ui <- fluidPage(
-  rHandsontableOutput('table'),
-  textOutput('result'),
-  tableOutput('covmat'),
-  plotOutput('plot'),
-  tableOutput('rbind_table'),
   
-  radioButtons('radio_buttons', 
-               label = "CMA or Historical Volatility?",
-               choices = c("CMA!!!" = "cma",
-                           "Historical" = "historical")),
-  numericInput('cash_rate', label = "Cash Rate:", value = 0)
+  titlePanel("Day One Risk Model"),
   
+  sidebarLayout(
+    sidebarPanel("Variables",
+                 actionButton("calculate", label = "Calculate"),
+                 radioButtons('radio_buttons', 
+                              label = "CMA or Historical Volatility?",
+                              choices = c("CMA!!!" = "cma",
+                                          "Historical" = "historical")),
+                 numericInput('cash_rate', label = "Cash Rate:", value = 0),
+                 img(src = "QMA_logo.jpg", height = 140, width = 400)),
+    mainPanel("Graphing",
+              rHandsontableOutput('table'),
+              plotOutput('plot'),
+              tableOutput('rbind_table')
+              )
+  )
 )
 
 
@@ -26,7 +32,7 @@ ui <- fluidPage(
 server <- function(input,output,session)({
 
   # The table up top
-  values <- reactiveValues(data = wgt_delta) # datatable found in helpers2  
+  values <- reactiveValues(data = wgt_delta/100) # datatable found in helpers2  
   
   observe({
     if(!is.null(input$table))
@@ -34,7 +40,8 @@ server <- function(input,output,session)({
   })
   
   output$table <- renderRHandsontable({
-    rhandsontable(values$data)
+    rhandsontable(values$data, rowHeaderWidth = 200) %>%
+      hot_col(col = column_names, format = "0.0")
   })
   
   # Choose the right covariance matrix
@@ -51,50 +58,80 @@ server <- function(input,output,session)({
     as.numeric(input$cash_rate)
   })
   
-  # Port Returns
-  port_return <- reactive({ 
-    as.double(colSums(mapply("*",(values$data + wgt_base),returns_cma)))
+  ############################
+  # Base Portfolio Statistics
+  ############################
+  # base Port Returns
+  bport_return <- reactive({ 
+    colSums(mapply("*",(wgt_base),returns_cma))
+  })
+  # base Port Vol
+  bport_vol <- reactive({
+    calcPortfolioVols2(covmat_final(), wgt_base)
+  })
+  # base Port Sharpe
+  bport_sharpe <- reactive({
+    (bport_return() - cash_rate()) / bport_vol()
   })
   
-  # Port Vol
-  port_vol <- reactive({
+  
+  ############################
+  # Delta portfolio statistics
+  ############################
+  # delta Port Returns
+  dport_return <- reactive({ 
+    colSums(mapply("*",(values$data + wgt_base),returns_cma))
+  })
+  # delta Port Vol
+  dport_vol <- reactive({
     calcPortfolioVols2(covmat_final(), (values$data + wgt_base))
   })
-  
-  # Port Sharpe
-  port_sharpe <- reactive({
-    as.double((port_return() - cash_rate()) / port_vol())
+  # delta Port Sharpe
+  dport_sharpe <- reactive({
+    (dport_return() - cash_rate()) / dport_vol()
   })
   
- 
-  output$covmat <- renderTable ({
-    covmat_final()
-  })
   
-  output$rbind_table <- renderTable ({
-    p_data <- rbind(as.double(port_return()), as.double(port_sharpe()), as.double(port_vol())) %>%
+  # plotting dataframes
+  dp_data <- reactive({
+    rbind(dport_return(), dport_sharpe(), dport_vol()) %>%
       as.data.frame() %>%
-      mutate(measure = c("return", "sharpe", "volatility")) %>%
-      gather(key = measure)
-    
-    colnames(p_data) <- c("measure","portfolio","value")
-    
-    p_data
+      mutate(measure = c("return", "sharpe", "volatility"),
+             port_type = "delta") %>%
+      gather(portfolio, value, -port_type, -measure)
   })
-
-  output$plot <- renderPlot({
-    p_data <- rbind(as.double(port_return()), as.double(port_sharpe()), as.double(port_vol())) %>%
-    as.data.frame() %>%
-    mutate(measure = c("return", "sharpe", "volatility")) %>%
-    gather(key = measure)
-
-    colnames(p_data) <- c("measure","portfolio","value")
   
-    ggplot(p_data, aes(x = portfolio, y = value)) +
-      geom_line() +
+  bp_data <- reactive({
+    rbind(bport_return(), bport_sharpe(), bport_vol()) %>%
+      as.data.frame() %>%
+      mutate(measure = c("return", "sharpe", "volatility"),
+             port_type = "base") %>%
+      gather(portfolio, value, -port_type, -measure)
+  })
+  
+
+  # The plot
+  output$plot <- renderPlot({
+    ggplot(rbind(bp_data(), dp_data()), aes(x = portfolio, y = value, colour = port_type)) +
+      geom_point() +
       facet_wrap(~measure)
   })
+  
+  
+  # Just a test to see what's driving the plotting
+  output$rbind_table <- renderTable ({
+    rbind(bp_data(), dp_data()) %>%
+      as.data.frame()
+    
+  })
+  
+  
+  
 }) 
+
+
+
+
 
 # Run the application 
 shinyApp(ui = ui, server = server)

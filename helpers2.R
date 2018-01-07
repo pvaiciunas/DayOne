@@ -77,3 +77,6 @@ covmat_hist <- matrix(c(0.00473258559299072,	0.000934763677033157,	0.00287274528
 colnames(covmat_hist) <- row_names
 covmat_hist <- cov(covmat_hist)
 covmat_cma <- covmat_hist
+
+
+  
